@@ -20,12 +20,12 @@
 </form>
 
 <div id="output" style="display: none;"></div>
-<div id="my-captcha-container" style="margin-top: 20px; display: none;">
-    <!-- Captcha widget sera affiché ici -->
+<div id="captcha-container" style="margin-top: 20px; display: none;">
+    <!-- Le widget CAPTCHA sera affiché ici -->
 </div>
 
 <script>
-    const apiKey = "...API key goes here..."; // Remplacez par l'API Key fournie
+    const apiKey = 'VOTRE_API_KEY'; // Remplacez par votre véritable clé API
     const wafUrl = "https://api.prod.jcloudify.com/whoami";
 
     document.getElementById('numberForm').addEventListener('submit', function (event) {
@@ -45,76 +45,78 @@
             const response = await fetch(wafUrl);
 
             if (response.ok) {
-                // Si la réponse est OK (statut 200), on affiche "Forbidden"
-                updateOutputLine(tempLine, `${index}. Forbidden`);
+                updateOutputLine(tempLine, `${index}. Accès autorisé`);
                 return true;
             } else if (response.status === 403) {
-                // Si le statut est 403 (Forbidden), on affiche "Forbidden"
-                updateOutputLine(tempLine, `${index}. Forbidden`);
+                updateOutputLine(tempLine, `${index}. Accès interdit`);
                 return true;
             } else if (response.status === 405) {
-                // Si le statut est 405 (Method Not Allowed), on affiche un CAPTCHA
                 return await showCaptcha(tempLine, index);
             } else {
-                // Si on reçoit un autre statut HTTP, on l'ignore ou on peut gérer ici si besoin
+                updateOutputLine(tempLine, `${index}. Erreur inconnue`);
                 return false;
             }
         } catch (error) {
             console.error('Erreur lors de la requête :', error);
+            return false;
         }
-        return false;
+    }
+
+    async function showCaptcha(tempLine, index) {
+        return new Promise((resolve) => {
+            const container = document.getElementById("captcha-container");
+            container.style.display = 'block'; // Afficher le conteneur CAPTCHA
+
+            // Initialiser le CAPTCHA avec l'API
+            AwsWafCaptcha.renderCaptcha(container, {
+                apiKey: apiKey,
+                onSuccess: (wafToken) => {
+                    container.style.display = 'none'; // Masquer le CAPTCHA après résolution
+                    resolveCaptcha(wafToken, tempLine, index, resolve);
+                },
+                onError: (error) => {
+                    console.error('Erreur avec le CAPTCHA :', error);
+                    resolve(false); // Arrêter la séquence si erreur
+                },
+            });
+        });
+    }
+
+    async function resolveCaptcha(wafToken, tempLine, index, resolve) {
+        try {
+            const response = await fetch(wafUrl, {
+                method: "POST",
+                headers: {
+                    'Authorization': `Bearer ${wafToken}`,
+                }
+            });
+
+            if (response.ok) {
+                updateOutputLine(tempLine, `${index}. Accès autorisé après CAPTCHA`);
+                resolve(true);
+            } else {
+                updateOutputLine(tempLine, `${index}. Échec de la validation CAPTCHA`);
+                resolve(false);
+            }
+        } catch (error) {
+            console.error('Erreur lors de la validation du CAPTCHA :', error);
+            resolve(false);
+        }
     }
 
     async function runSequence(N, outputDiv) {
         outputDiv.innerHTML = ''; // Réinitialiser la sortie
         for (let i = 1; i <= N; i++) {
-            // Ajouter une ligne temporaire avec "En attente" au début
             const tempLine = addOutputLine(outputDiv, `${i}. En attente...`);
 
-            // Effectuer la requête et gérer le succès ou l'échec
             const success = await fetchWithCaptcha(i, tempLine);
             if (!success) {
                 addOutputLine(outputDiv, "Processus interrompu. Réessayez plus tard.");
                 break;
             }
 
-            // Attendre 1 seconde entre chaque requête
-            await delay(1000);
+            await delay(1000); // Attendre 1 seconde avant de continuer
         }
-    }
-
-    function showCaptcha(tempLine, index) {
-        return new Promise((resolve) => {
-            const container = document.querySelector("#my-captcha-container");
-            container.style.display = 'block'; // Afficher le conteneur CAPTCHA
-
-            // Ici, vous utilisez l'API du CAPTCHA pour résoudre le CAPTCHA
-            AwsWafCaptcha.renderCaptcha(container, {
-                apiKey: apiKey,
-                onSuccess: (wafToken) => {
-                    container.style.display = 'none'; // Masquer le CAPTCHA après validation
-
-                    // Faire une nouvelle requête avec le token CAPTCHA
-                    AwsWafIntegration.fetch(wafUrl, {
-                        method: "POST",
-                        headers: {
-                            'Authorization': `Bearer ${wafToken}`,
-                        }
-                    }).then(() => {
-                        // Une fois le CAPTCHA validé, mettre à jour la ligne avec "Forbidden"
-                        updateOutputLine(tempLine, `${index}. Forbidden`);
-                        resolve(true); // Continuer la séquence
-                    }).catch((error) => {
-                        console.error('Erreur lors de la résolution du CAPTCHA :', error);
-                        resolve(false); // Arrêter la séquence en cas d'erreur
-                    });
-                },
-                onError: (error) => {
-                    console.error('Erreur avec le CAPTCHA :', error);
-                    resolve(false); // Arrêter la séquence en cas d'erreur
-                },
-            });
-        });
     }
 
     function addOutputLine(container, text) {
@@ -125,7 +127,7 @@
     }
 
     function updateOutputLine(line, text) {
-        line.textContent = text; // Mettre à jour le contenu de la ligne
+        line.textContent = text;
     }
 
     function delay(ms) {
