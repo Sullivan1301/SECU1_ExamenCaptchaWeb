@@ -7,8 +7,8 @@
     <script type="text/javascript" src="https://b82b1763d1c3.ef7ef6cc.eu-west-3.captcha.awswaf.com/b82b1763d1c3/jsapi.js" defer></script>
     <style>
         body { font-family: Arial, sans-serif; padding: 20px; }
-        #sequence { margin-top: 20px; max-height: 300px; overflow-y: auto; list-style-type: none; padding: 0; }
-        #sequence li { padding: 5px 0; }
+        #output { margin-top: 20px; max-height: 300px; overflow-y: auto; font-family: monospace; }
+        #output div { margin-bottom: 5px; }
     </style>
 </head>
 <body>
@@ -19,8 +19,7 @@
     <button type="submit">Lancer</button>
 </form>
 
-<ul id="sequence"></ul>
-
+<div id="output" style="display: none;"></div>
 <div id="my-captcha-container" style="margin-top: 20px; display: none;">
     <!-- Captcha widget sera affiché ici -->
 </div>
@@ -32,30 +31,33 @@
     document.getElementById('numberForm').addEventListener('submit', function (event) {
         event.preventDefault();
         const N = parseInt(document.getElementById('numberInput').value, 10);
-        runSequence(N);
+
+        // Masquer le formulaire et afficher la zone de sortie
+        document.getElementById('numberForm').style.display = 'none';
+        const outputDiv = document.getElementById('output');
+        outputDiv.style.display = 'block';
+
+        runSequence(N, outputDiv);
     });
 
-    async function runSequence(N) {
-        const sequenceDiv = document.getElementById('sequence');
-        sequenceDiv.innerHTML = ''; // Clear sequence list
-        for (let i = 1; i <= N; i++) {
-            const success = await fetchWithCaptcha(i, sequenceDiv);
-            if (!success) {
-                break; // Stop execution if CAPTCHA fails
-            }
-            await delay(1000); // Delay of 1 second between requests
-        }
-    }
-
-    async function fetchWithCaptcha(index, sequenceDiv) {
+    async function fetchWithCaptcha(index, tempLine) {
         try {
             const response = await fetch(wafUrl);
+
             if (response.ok) {
-                addListItem(sequenceDiv, `${index}. Forbidden`);
+                // Si la réponse est OK (statut 200), on affiche "Forbidden"
+                updateOutputLine(tempLine, `${index}. Forbidden`);
                 return true;
             } else if (response.status === 403) {
-                // CAPTCHA detected
-                return await showCaptcha(sequenceDiv, index);
+                // Si le statut est 403 (Forbidden), on affiche "Forbidden"
+                updateOutputLine(tempLine, `${index}. Forbidden`);
+                return true;
+            } else if (response.status === 405) {
+                // Si le statut est 405 (Method Not Allowed), on affiche un CAPTCHA
+                return await showCaptcha(tempLine, index);
+            } else {
+                // Si on reçoit un autre statut HTTP, on l'ignore ou on peut gérer ici si besoin
+                return false;
             }
         } catch (error) {
             console.error('Erreur lors de la requête :', error);
@@ -63,39 +65,67 @@
         return false;
     }
 
-    function showCaptcha(sequenceDiv, index) {
+    async function runSequence(N, outputDiv) {
+        outputDiv.innerHTML = ''; // Réinitialiser la sortie
+        for (let i = 1; i <= N; i++) {
+            // Ajouter une ligne temporaire avec "En attente" au début
+            const tempLine = addOutputLine(outputDiv, `${i}. En attente...`);
+
+            // Effectuer la requête et gérer le succès ou l'échec
+            const success = await fetchWithCaptcha(i, tempLine);
+            if (!success) {
+                addOutputLine(outputDiv, "Processus interrompu. Réessayez plus tard.");
+                break;
+            }
+
+            // Attendre 1 seconde entre chaque requête
+            await delay(1000);
+        }
+    }
+
+    function showCaptcha(tempLine, index) {
         return new Promise((resolve) => {
             const container = document.querySelector("#my-captcha-container");
-            container.style.display = 'block'; // Display CAPTCHA container
+            container.style.display = 'block'; // Afficher le conteneur CAPTCHA
+
+            // Ici, vous utilisez l'API du CAPTCHA pour résoudre le CAPTCHA
             AwsWafCaptcha.renderCaptcha(container, {
                 apiKey: apiKey,
                 onSuccess: (wafToken) => {
-                    container.style.display = 'none'; // Hide CAPTCHA container
+                    container.style.display = 'none'; // Masquer le CAPTCHA après validation
+
+                    // Faire une nouvelle requête avec le token CAPTCHA
                     AwsWafIntegration.fetch(wafUrl, {
                         method: "POST",
                         headers: {
                             'Authorization': `Bearer ${wafToken}`,
                         }
                     }).then(() => {
-                        addListItem(sequenceDiv, `${index}. CAPTCHA Passed`);
-                        resolve(true); // Continue sequence
+                        // Une fois le CAPTCHA validé, mettre à jour la ligne avec "Forbidden"
+                        updateOutputLine(tempLine, `${index}. Forbidden`);
+                        resolve(true); // Continuer la séquence
                     }).catch((error) => {
                         console.error('Erreur lors de la résolution du CAPTCHA :', error);
-                        resolve(false); // Stop sequence
+                        resolve(false); // Arrêter la séquence en cas d'erreur
                     });
                 },
                 onError: (error) => {
                     console.error('Erreur avec le CAPTCHA :', error);
-                    resolve(false); // Stop sequence
+                    resolve(false); // Arrêter la séquence en cas d'erreur
                 },
             });
         });
     }
 
-    function addListItem(container, text) {
-        const listItem = document.createElement('li');
-        listItem.textContent = text;
-        container.appendChild(listItem);
+    function addOutputLine(container, text) {
+        const line = document.createElement('div');
+        line.textContent = text;
+        container.appendChild(line);
+        return line; // Retourner une référence pour mise à jour
+    }
+
+    function updateOutputLine(line, text) {
+        line.textContent = text; // Mettre à jour le contenu de la ligne
     }
 
     function delay(ms) {
